@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小学校席替えシミュレーター</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background-color: #f4f7f6; }
+        h1, h2 { color: #333; text-align: center; }
+        .controls { margin-bottom: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-align: center; }
+        button { padding: 12px 20px; margin: 0 10px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; font-size: 1em; transition: background 0.3s; }
+        #addStudentBtn { background-color: #4CAF50; color: white; }
+        #addStudentBtn:hover { background-color: #45a049; }
+        #shuffleBtn { background-color: #2196F3; color: white; }
+        #shuffleBtn:hover { background-color: #1e88e5; }
+        
+        #studentList { margin-bottom: 30px; }
+        #studentCards { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; }
+        .student-card { border: 1px solid #ddd; padding: 15px; width: 250px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .student-card input, .student-card select { width: 100%; margin-bottom: 8px; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .delete-btn { background-color: #f44336; color: white; padding: 8px 12px; width: 100%; font-size: 0.9em; }
+        .delete-btn:hover { background-color: #d32f2f; }
+
+        .grid-container { display: flex; justify-content: center; margin-top: 20px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 10px;
+            width: 100%;
+            max-width: 900px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .seat {
+            border: 2px solid #ddd;
+            height: 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #fafafa;
+            cursor: grab;
+            border-radius: 4px;
+            font-size: 0.9em;
+            text-align: center;
+            position: relative;
+            transition: all 0.2s;
+        }
+        .seat:hover { background-color: #f0f0f0; }
+        .seat.occupied { background-color: #e0f7fa; border-color: #00bcd4; color: #006064; font-weight: bold;}
+        .seat.dragging { opacity: 0.5; border: 2px dashed #333; }
+        .seat-number { position: absolute; top: 2px; left: 4px; font-size: 0.7em; color: #888; }
+        .seat-name { font-size: 1.1em; }
+    </style>
+</head>
+<body>
+
+    <h1>🏫 小学校席替えシミュレーター</h1>
+    
+    <div class="controls">
+        <button id="addStudentBtn">＋ 児童を追加</button>
+        <button id="shuffleBtn">🎲 席替え実行</button>
+    </div>
+
+    <div id="studentList">
+        <h2>児童一覧 (<span id="studentCount">0</span>人)</h2>
+        <div id="studentCards"></div>
+    </div>
+
+    <div id="seatingChart">
+        <h2>座席表 (6列 × 5行)</h2>
+        <div class="grid-container">
+            <div class="grid" id="grid"></div>
+        </div>
+    </div>
+
+    <script>
+        let students = [];
+        const gridContainer = document.getElementById('grid');
+
+        // 1. 席枠の生成 (6x5 = 30席)
+        function createGrid() {
+            gridContainer.innerHTML = '';
+            for (let i = 0; i < 30; i++) {
+                const seat = document.createElement('div');
+                seat.className = 'seat';
+                seat.dataset.index = i;
+                seat.innerHTML = `<span class="seat-number">${i + 1}</span><span class="seat-name"></span>`;
+                
+                // ドラッグ＆ドロップ機能の設定
+                seat.setAttribute('draggable', true);
+                seat.addEventListener('dragstart', handleDragStart);
+                seat.addEventListener('dragover', handleDragOver);
+                seat.addEventListener('drop', handleDrop);
+                seat.addEventListener('dragend', handleDragEnd);
+                
+                gridContainer.appendChild(seat);
+            }
+        }
+
+        // 2. 児童追加機能
+        document.getElementById('addStudentBtn').addEventListener('click', () => {
+            const student = {
+                id: Date.now(),
+                name: `児童${students.length + 1}`,
+                gender: '男',
+                height: 140,
+                vision: '普通', // 悪い, やや悪い, 普通, 良い, とても良い
+                priority: '普通', // 最優先, 高, 普通
+                notes: ''
+            };
+            students.push(student);
+            renderStudentCards();
+        });
+
+        // 3. 児童カードの描画と編集
+        function renderStudentCards() {
+            const container = document.getElementById('studentCards');
+            container.innerHTML = '';
+            document.getElementById('studentCount').textContent = students.length;
+            
+            students.forEach((student, index) => {
+                const card = document.createElement('div');
+                card.className = 'student-card';
+                card.innerHTML = `
+                    <input type="text" placeholder="名前" value="${student.name}" onchange="updateStudent(${index}, 'name', this.value)">
+                    <select onchange="updateStudent(${index}, 'gender', this.value)">
+                        <option value="男" ${student.gender === '男' ? 'selected' : ''}>男</option>
+                        <option value="女" ${student.gender === '女' ? 'selected' : ''}>女</option>
+                    </select>
+                    <input type="number" placeholder="身長(cm)" value="${student.height}" onchange="updateStudent(${index}, 'height', this.value)">
+                    <select onchange="updateStudent(${index}, 'vision', this.value)">
+                        <option value="悪い" ${student.vision === '悪い' ? 'selected' : ''}>視力: 悪い</option>
+                        <option value="やや悪い" ${student.vision === 'やや悪い' ? 'selected' : ''}>視力: やや悪い</option>
+                        <option value="普通" ${student.vision === '普通' ? 'selected' : ''}>視力: 普通</option>
+                        <option value="良い" ${student.vision === '良い' ? 'selected' : ''}>視力: 良い</option>
+                        <option value="とても良い" ${student.vision === 'とても良い' ? 'selected' : ''}>視力: とても良い</option>
+                    </select>
+                    <select onchange="updateStudent(${index}, 'priority', this.value)">
+                        <option value="普通" ${student.priority === '普通' ? 'selected' : ''}>配慮: 通常</option>
+                        <option value="高" ${student.priority === '高' ? 'selected' : ''}>配慮: 高(前列重視)</option>
+                        <option value="最優先" ${student.priority === '最優先' ? 'selected' : ''}>配慮: 最優先(最前列)</option>
+                    </select>
+                    <input type="text" placeholder="配慮事項(例: A君と隣NG)" value="${student.notes}" onchange="updateStudent(${index}, 'notes', this.value)">
+                    <button class="delete-btn" onclick="deleteStudent(${index})">削除</button>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateStudent(index, key, value) {
+            students[index][key] = value;
+        }
+
+        function deleteStudent(index) {
+            students.splice(index, 1);
+            renderStudentCards();
+        }
+
+        // 4. 席替えアルゴリズム
+        document.getElementById('shuffleBtn').addEventListener('click', () => {
+            if (students.length > 30) {
+                alert('児童数が席数（30）を超えています');
+                return;
+            }
+            
+            // 配慮優先度と視力に基づいたソート用マッピング
+            const visionMap = { '悪い': 1, 'やや悪い': 2, '普通': 3, '良い': 4, 'とても良い': 5 };
+            const priorityMap = { '最優先': 1, '高': 2, '普通': 3 };
+            
+            // ソート
+            let sortedStudents = [...students].sort((a, b) => {
+                // 1. 配慮事項の優先度が高い人を前に
+                if (priorityMap[a.priority] !== priorityMap[b.priority]) {
+                    return priorityMap[a.priority] - priorityMap[b.priority];
+                }
+                // 2. 次に視力が悪い人を前に
+                if (visionMap[a.vision] !== visionMap[b.vision]) {
+                    return visionMap[a.vision] - visionMap[b.vision];
+                }
+                // 3. 基本はランダム（配慮事項がない場合）
+                return 0.5 - Math.random();
+            });
+
+            // 画面の初期化
+            const seats = document.querySelectorAll('.seat');
+            seats.forEach(seat => {
+                seat.querySelector('.seat-name').textContent = '';
+                seat.classList.remove('occupied');
+            });
+
+            // 配置
+            sortedStudents.forEach((student, index) => {
+                if (index < 30) {
+                    seats[index].querySelector('.seat-name').textContent = student.name;
+                    seats[index].classList.add('occupied');
+                }
+            });
+        });
+
+        // --- ドラッグ＆ドロップ機能 (手動調整) ---
+        let dragSrcEl = null;
+
+        function handleDragStart(e) {
+            dragSrcEl = this;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', this.innerHTML);
+            e.dataTransfer.setData('className', this.className);
+            this.classList.add('dragging');
+        }
+
+        function handleDragOver(e) {
+            if (e.preventDefault) e.preventDefault();
+            return false;
+        }
+
+        function handleDrop(e) {
+            if (e.stopPropagation) e.stopPropagation();
+            
+            if (dragSrcEl !== this) {
+                // 内容（名前）を入れ替え
+                const tempHTML = this.innerHTML;
+                this.innerHTML = dragSrcEl.innerHTML;
+                dragSrcEl.innerHTML = tempHTML;
+                
+                // クラス（occupied）を入れ替え
+                const tempClass = this.className;
+                this.className = dragSrcEl.className;
+                dragSrcEl.className = tempClass;
+            }
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            this.classList.remove('dragging');
+            document.querySelectorAll('.seat').forEach(s => s.classList.remove('dragging'));
+        }
+
+        // 初期化
+        createGrid();
+    </script>
+</body>
+</html>
